@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gemma-1b-offline
+  namespace: vllm-gemma-3-x86
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gemma-1b-offline
+  template:
+    metadata:
+      labels:
+        app: gemma-1b-offline
+    spec:
+      serviceAccountName: default
+      containers:
+      - name: vllm-server
+        # x86_64 CPU build. For a true air gap, mirror this image into the internal registry and reference it here.
+        image: vllm/vllm-openai-cpu:v0.31.0-x86_64
+        imagePullPolicy: IfNotPresent
+        command: ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+        args:
+          # HOW TO SWAP MODELS:
+          # Change this path to point to the other offline folders we downloaded.
+          # Examples:
+          # - /models-cache/offline-models/RedHatAI/gemma-3-1b-it-quantized.w8a8 (Fits 8Gi limit)
+          # - /models-cache/offline-models/google/gemma-3-1b-it (Fits 8Gi limit)
+          # - /models-cache/offline-models/RedHatAI/gemma-3-4b-it-quantized.w8a8 (REQUIRES limits: 12Gi and CRC Memory scaled to 24GB)
+          - "--model"
+          - "/models-cache/offline-models/RedHatAI/gemma-3-1b-it-quantized.w8a8"
+          - "--port"
+          - "8000"
+          - "--host"
+          - "0.0.0.0"
+          - "--max-model-len"
+          - "512"
+          - "--max-num-seqs"
+          - "1"
+        env:
+          # Strict offline mode ensures vLLM never attempts to reach the internet
+          - name: HF_HUB_OFFLINE
+            value: "1"
+          - name: VLLM_CPU_KVCACHE_SPACE
+            value: "1"
+          # Keep in line with the CPU limit below
+          - name: OMP_NUM_THREADS
+            value: "6"
+        ports:
+          - containerPort: 8000
+        resources:
+          requests:
+            memory: "6Gi"
+            cpu: "2"
+          limits:
+            # 10Gi leaves headroom for the KV cache after weights and the 2Gi /dev/shm (8Gi caused a first-start failure)
+            memory: "10Gi"
+            cpu: "6"
+        volumeMounts:
+          - name: dshm
+            mountPath: /dev/shm
+          - name: model-cache
+            mountPath: /models-cache
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 90
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: "2Gi"
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: gemma-model-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gemma-1b-offline
+  namespace: vllm-gemma-3-x86
+spec:
+  ports:
+  - port: 80
+    targetPort: 8000
+  selector:
+    app: gemma-1b-offline
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: gemma-1b-offline
+  namespace: vllm-gemma-3-x86
+spec:
+  to:
+    kind: Service
+    name: gemma-1b-offline

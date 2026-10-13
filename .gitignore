@@ -1,0 +1,30 @@
+# Secrets / environment
+.env
+.env.*
+!.env.example
+
+# Locally downloaded model weights (10GB+)
+offline-models/
+*.safetensors
+*.bin
+*.gguf
+
+# Temporary CA certificates, tokens and scratch notes
+tls.crt
+*.pem
+*.key
+*.txt
+
+# Third-party reference material
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
